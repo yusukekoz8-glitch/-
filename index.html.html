@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>スマホ行動認証ログ取得</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, initial-scale=1.0">
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 15px;
+    }
+    #targetArea {
+      margin-bottom: 15px;
+      padding: 10px;
+      border: 1px dashed #aaa;
+      background-color: #f9f9f9;
+    }
+    input {
+      width: 100%;
+      font-size: 18px;
+      padding: 8px;
+      transition: all 0.2s;
+    }
+    .input-error {
+      background-color: #ffcccc;
+      border: 2px solid red;
+      animation: shake 0.5s;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+      20%, 40%, 60%, 80% { transform: translateX(5px); }
+    }
+    #inputComparison span.miss {
+      color: red;
+      font-weight: bold;
+    }
+    #inputComparison span.correct {
+      color: green;
+    }
+    button {
+      margin-top: 10px;
+      padding: 8px 12px;
+      font-size: 16px;
+    }
+    #log {
+      margin-top: 15px;
+      border: 1px solid #ccc;
+      padding: 10px;
+      white-space: pre-wrap;
+      height: 300px;
+      overflow-y: auto;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>入力してください</h2>
+  <div id="targetArea">
+    <p>お手本：<strong id="targetDisplay">大月先生は、長野県松本市出身である。生まれは、</strong></p>
+    <p>あなたの入力：<span id="inputComparison"></span></p>
+  </div>
+
+  <input type="text" id="inputBox" autocomplete="off">
+  <button id="finishBtn">完了</button>
+  <button id="resetBtn">リセット</button>
+
+  <h3>入力ログ</h3>
+  <div id="log"></div>
+
+  <script>
+    // --- 要素の取得 ---
+    const inputBox = document.getElementById("inputBox");
+    const finishBtn = document.getElementById("finishBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const logArea = document.getElementById("log");
+    const targetDisplay = document.getElementById("targetDisplay");
+    const inputComparisonArea = document.getElementById("inputComparison");
+
+    // --- 変数の定義 ---
+    let logs = [];
+    let lastTouchEndTime = null;
+    let touchStartTime = null;
+    let startX = null;
+    let startY = null;
+
+    // PCキーボード用
+    let lastValue = "";
+    let keyTimes = {};         
+    let lastKeyUpTime = null;  
+    let lastKeyPressTime = null;
+    let isComposing = false;   
+    let justConfirmed = false; 
+
+    const targetText = "大月先生は、長野県松本市出身である。生まれは、";
+
+    // --- スマホ用：タッチ挙動ログ取得 ---
+    inputBox.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      touchStartTime = performance.now();
+      startX = t.clientX;
+      startY = t.clientY;
+    });
+
+    inputBox.addEventListener("touchend", (e) => {
+      const endTime = performance.now();
+      const duration = endTime - touchStartTime;
+
+      let interval = null;
+      if (lastTouchEndTime !== null) {
+        interval = endTime - lastTouchEndTime;
+      }
+
+      logs.push({
+        type: "touch",
+        text: inputBox.value,
+        duration: Math.round(duration),
+        interval: interval ? Math.round(interval) : null,
+        x: Math.round(startX),
+        y: Math.round(startY),
+        time: Math.round(endTime)
+      });
+
+      lastTouchEndTime = endTime;
+    });
+
+
+    // --- PCキーボード用：タイピング挙動ログ取得 ---
+
+    // 1. IME（日本語入力）の制御
+    inputBox.addEventListener("compositionstart", () => {
+      isComposing = true;
+      justConfirmed = false;
+    });
+
+    inputBox.addEventListener("compositionend", () => {
+      isComposing = false;
+      justConfirmed = true; // 漢字が確定された瞬間をマーク
+      checkMissAndFeedback();
+    });
+
+    // 2. キーボードが押された瞬間 (keydown)
+    inputBox.addEventListener("keydown", (e) => {
+      if (e.repeat) return;
+     
+      const now = performance.now();
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+
+      if (!keyTimes[e.code]) {
+        keyTimes[e.code] = now;
+      }
+
+      // 新指標: Press-to-Press (P-P) の計算
+      let ppTime = null;
+      if (lastKeyPressTime !== null) {
+        ppTime = Math.round(now - lastKeyPressTime);
+      }
+      lastKeyPressTime = now;
+
+      // 従来指標: Interval Time の計算
+      let intervalTime = null;
+      if (lastKeyUpTime !== null) {
+        intervalTime = Math.round(now - lastKeyUpTime);
+      }
+
+      inputBox.dataset.latestInterval = intervalTime !== null ? intervalTime : "";
+      inputBox.dataset.latestPP = ppTime !== null ? ppTime : "";
+
+      if (!isComposing) {
+        checkMissAndFeedback();
+      }
+    });
+
+    // 3. キーボードが離された瞬間 (keyup)
+    inputBox.addEventListener("keyup", (e) => {
+      const now = performance.now();
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+
+      const pressTime = keyTimes[e.code];
+      if (!pressTime) return;
+
+      const holdTime = Math.round(now - pressTime);
+     
+      const savedInterval = inputBox.dataset.latestInterval;
+      const savedPP = inputBox.dataset.latestPP;
+      const intervalTime = savedInterval !== "" ? parseInt(savedInterval, 10) : null;
+      const ppTime = savedPP !== "" ? parseInt(savedPP, 10) : null;
+
+      delete keyTimes[e.code];
+      lastKeyUpTime = now;
+
+      // ★タイミングのズレを防ぐため、keyupイベントが動いた「まさにその瞬間」の入力文字を強制取得
+      const currentInput = inputBox.value;
+     
+      let currentType = "入力";
+      if (e.code === "Backspace") {
+        currentType = "削除";
+      }
+
+      let isMiss = false;
+
+      // 【修正の要】
+      // 変換中(isComposing)フラグが立っている間は完全にミス判定をパス(falseに固定)
+      if (!isComposing) {
+        // 確定した直後のEnterキー、またはBackspace、または半角英数の直接入力の場合
+        if (justConfirmed || currentType === "削除" || (e.code !== "Enter" && e.code !== "Space")) {
+          if (currentInput.length > 0) {
+            // お手本文字列の、現在の入力文字数分を切り出して比較
+            const targetSubstring = targetText.substring(0, currentInput.length);
+            if (currentInput !== targetSubstring) {
+              isMiss = true; // ミスを検知
+            }
+          }
+        }
+      }
+
+      // ログオブジェクトを作成して配列にプッシュ
+      logs.push({
+        "タイプ": currentType,
+        "押されたキー": e.code,            
+        "変換中フラグ": isComposing || justConfirmed,        
+        "変更前テキスト": lastValue,
+        "変更後テキスト": currentInput,
+        "ミス": isMiss,
+        "キーホールド時間(ms)": holdTime,
+        "キー間移動時間(ms)": intervalTime,
+        "pressToPress(ms)": ppTime,
+        "time": Math.round(now)
+      });
+
+      // 確定キーやスペースが離されたらフラグを安全に戻す
+      if (e.code === "Enter" || e.code === "Space") {
+        justConfirmed = false;
+      }
+
+      // 画面更新処理
+      if (!isComposing) {
+        checkMissAndFeedback();
+      } else {
+        lastValue = currentInput;
+      }
+    });
+
+    // 4. ミス判定と視覚フィードバック関数
+    function checkMissAndFeedback() {
+      const currentInput = inputBox.value;
+      let isMiss = false;
+
+      if (currentInput.length > 0) {
+        const targetSubstring = targetText.substring(0, currentInput.length);
+        if (currentInput !== targetSubstring) {
+          isMiss = true;
+        }
+      }
+
+      if (isMiss) {
+        if (!inputBox.classList.contains('input-error')) {
+          inputBox.classList.add('input-error');
+        }
+      } else {
+        inputBox.classList.remove('input-error');
+      }
+
+      updateComparisonDisplay(currentInput);
+      lastValue = currentInput;
+    }
+
+    // 5. お手本エリアのリアルタイム色付け表示
+    function updateComparisonDisplay(currentInput) {
+      inputComparisonArea.innerHTML = '';
+
+      for (let i = 0; i < currentInput.length; i++) {
+        const span = document.createElement('span');
+        span.textContent = currentInput[i];
+       
+        if (i < targetText.length && currentInput[i] !== targetText[i]) {
+          span.classList.add('miss');
+        } else {
+          span.classList.add('correct');
+        }
+        inputComparisonArea.appendChild(span);
+      }
+    }
+
+    // --- ボタンコントロール ---
+
+    // 6. 完了ボタン（一括表示）
+    finishBtn.addEventListener("click", () => {
+      logArea.textContent = "";
+
+      if (logs.length === 0) {
+        logArea.textContent = "ログデータがありません。";
+        return;
+      }
+
+      let formattedLog = "";
+      logs.forEach((log, i) => {
+        formattedLog += `#${i + 1}\n`;
+        formattedLog += JSON.stringify(log, null, 2);
+        formattedLog += "\n\n";
+      });
+
+      logArea.textContent = formattedLog;
+    });
+
+    // 7. リセットボタン
+    resetBtn.addEventListener("click", () => {
+      inputBox.value = "";
+      inputBox.classList.remove('input-error');
+      inputComparisonArea.innerHTML = '';
+      lastValue = "";
+      logs = [];
+      logArea.textContent = "";
+     
+      lastTouchEndTime = null;
+      touchStartTime = null;
+      startX = null;
+      startY = null;
+
+      keyTimes = {};
+      lastKeyUpTime = null;
+      lastKeyPressTime = null;
+      isComposing = false;
+      justConfirmed = false;
+    });
+  </script>
+</body>
+</html>
