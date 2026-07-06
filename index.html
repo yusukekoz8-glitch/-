@@ -3,23 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <title>スマホ行動認証ログ取得</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
       font-family: sans-serif;
       padding: 15px;
+      max-width: 600px;
+      margin: 0 auto;
     }
     #targetArea {
       margin-bottom: 15px;
       padding: 10px;
       border: 1px dashed #aaa;
       background-color: #f9f9f9;
+      font-size: 16px;
+      line-height: 1.5;
     }
-    input {
+    .participant-area {
+      margin-bottom: 15px;
+      padding: 10px;
+      background-color: #eef7ff;
+      border: 1px solid #bce0ff;
+      border-radius: 5px;
+    }
+    .participant-area label {
+      font-weight: bold;
+      font-size: 14px;
+      display: block;
+      margin-bottom: 5px;
+    }
+    .participant-area input {
+      width: 100px;
+      padding: 5px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    input[type="text"]#inputBox {
       width: 100%;
       font-size: 18px;
       padding: 8px;
       transition: all 0.2s;
+      box-sizing: border-box;
     }
     .input-error {
       background-color: #ffcccc;
@@ -38,47 +62,96 @@
     #inputComparison span.correct {
       color: green;
     }
+    .btn-group {
+      margin-top: 15px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     button {
-      margin-top: 10px;
-      padding: 8px 12px;
+      padding: 10px 16px;
       font-size: 16px;
+      cursor: pointer;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      background-color: #f0f0f0;
+    }
+    button#finishBtn {
+      background-color: #28a745;
+      color: white;
+      border-color: #1e7e34;
+      font-weight: bold;
+    }
+    button#finishBtn:disabled {
+      background-color: #6c757d;
+      border-color: #6c757d;
+      cursor: not-allowed;
+    }
+    button#downloadBtn {
+      background-color: #17a2b8;
+      color: white;
+      border-color: #117a8b;
+    }
+    #statusMessage {
+      margin-top: 10px;
+      font-weight: bold;
+      font-size: 14px;
     }
     #log {
       margin-top: 15px;
       border: 1px solid #ccc;
       padding: 10px;
       white-space: pre-wrap;
-      height: 300px;
+      height: 200px;
       overflow-y: auto;
-      font-size: 14px;
+      font-size: 12px;
+      background-color: #fafafa;
     }
   </style>
 </head>
 <body>
 
   <h2>入力してください</h2>
+ 
+  <div class="participant-area">
+    <label for="participantId">参加者番号 (例: 01, A):</label>
+    <input type="text" id="participantId" value="01" autocomplete="off">
+  </div>
+
   <div id="targetArea">
     <p>お手本：<strong id="targetDisplay">大月先生は、長野県松本市出身である。生まれは、</strong></p>
     <p>あなたの入力：<span id="inputComparison"></span></p>
   </div>
 
   <input type="text" id="inputBox" autocomplete="off">
-  <button id="finishBtn">完了</button>
-  <button id="resetBtn">リセット</button>
+ 
+  <div class="btn-group">
+    <button id="finishBtn">完了（自動送信）</button>
+    <button id="downloadBtn">手動CSV保存</button>
+    <button id="resetBtn">リセット</button>
+  </div>
+
+  <div id="statusMessage"></div>
 
   <h3>入力ログ</h3>
   <div id="log"></div>
 
   <script>
-    // --- 要素の取得 ---
+    // 🔗 【設定完了】ご提示いただいたGoogle Apps ScriptのURLを組み込みました！
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbznXh_knnPNF1z7Vx0lxn5nbhwjsuv2Wz4OhYlWKZLp8gQsuZ_eXeLr6lKGuWlquXUx/exec";
+
+    // 要素の取得
     const inputBox = document.getElementById("inputBox");
     const finishBtn = document.getElementById("finishBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
     const resetBtn = document.getElementById("resetBtn");
     const logArea = document.getElementById("log");
     const targetDisplay = document.getElementById("targetDisplay");
     const inputComparisonArea = document.getElementById("inputComparison");
+    const participantInput = document.getElementById("participantId");
+    const statusMessage = document.getElementById("statusMessage");
 
-    // --- 変数の定義 ---
+    // 変数の定義
     let logs = [];
     let lastTouchEndTime = null;
     let touchStartTime = null;
@@ -87,11 +160,11 @@
 
     // PCキーボード用
     let lastValue = "";
-    let keyTimes = {};         
-    let lastKeyUpTime = null;  
+    let keyTimes = {};
+    let lastKeyUpTime = null;
     let lastKeyPressTime = null;
-    let isComposing = false;   
-    let justConfirmed = false; 
+    let isComposing = false;
+    let justConfirmed = false;
 
     const targetText = "大月先生は、長野県松本市出身である。生まれは、";
 
@@ -106,23 +179,27 @@
     inputBox.addEventListener("touchend", (e) => {
       const endTime = performance.now();
       const duration = endTime - touchStartTime;
-
+     
       let interval = null;
       if (lastTouchEndTime !== null) {
         interval = endTime - lastTouchEndTime;
       }
 
       logs.push({
-        type: "touch",
-        text: inputBox.value,
-        duration: Math.round(duration),
-        interval: interval ? Math.round(interval) : null,
-        x: Math.round(startX),
-        y: Math.round(startY),
-        time: Math.round(endTime)
+        "タイプ": "タッチ",
+        "押されたキー": null,
+        "変換中フラグ": null,
+        "変更前テキスト": null,
+        "変更後テキスト": null,
+        "ミス": null,
+        "キーホールド時間(ms)": Math.round(duration),
+        "キー間移動時間(ms)": interval ? Math.round(interval) : null,
+        "pressToPress(ms)": null,
+        "time": Math.round(endTime)
       });
 
       lastTouchEndTime = endTime;
+      updateLogDisplay();
     });
 
 
@@ -136,14 +213,14 @@
 
     inputBox.addEventListener("compositionend", () => {
       isComposing = false;
-      justConfirmed = true; // 漢字が確定された瞬間をマーク
+      justConfirmed = true; // 漢字が確定された瞬間
       checkMissAndFeedback();
     });
 
-    // 2. キーボードが押された瞬間 (keydown)
+    // 2. キーボードが押された瞬間（keydown）
     inputBox.addEventListener("keydown", (e) => {
       if (e.repeat) return;
-     
+
       const now = performance.now();
       if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
 
@@ -151,19 +228,20 @@
         keyTimes[e.code] = now;
       }
 
-      // 新指標: Press-to-Press (P-P) の計算
+      // Press-to-Press (P-P) の計算
       let ppTime = null;
       if (lastKeyPressTime !== null) {
         ppTime = Math.round(now - lastKeyPressTime);
       }
       lastKeyPressTime = now;
 
-      // 従来指標: Interval Time の計算
+      // Interval Time の計算
       let intervalTime = null;
       if (lastKeyUpTime !== null) {
         intervalTime = Math.round(now - lastKeyUpTime);
       }
 
+      // 一時的にデータ属性に保存
       inputBox.dataset.latestInterval = intervalTime !== null ? intervalTime : "";
       inputBox.dataset.latestPP = ppTime !== null ? ppTime : "";
 
@@ -172,7 +250,7 @@
       }
     });
 
-    // 3. キーボードが離された瞬間 (keyup)
+    // 3. キーボードが離された瞬間（keyup）
     inputBox.addEventListener("keyup", (e) => {
       const now = performance.now();
       if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
@@ -181,7 +259,7 @@
       if (!pressTime) return;
 
       const holdTime = Math.round(now - pressTime);
-     
+
       const savedInterval = inputBox.dataset.latestInterval;
       const savedPP = inputBox.dataset.latestPP;
       const intervalTime = savedInterval !== "" ? parseInt(savedInterval, 10) : null;
@@ -190,9 +268,7 @@
       delete keyTimes[e.code];
       lastKeyUpTime = now;
 
-      // ★タイミングのズレを防ぐため、keyupイベントが動いた「まさにその瞬間」の入力文字を強制取得
       const currentInput = inputBox.value;
-     
       let currentType = "入力";
       if (e.code === "Backspace") {
         currentType = "削除";
@@ -200,26 +276,22 @@
 
       let isMiss = false;
 
-      // 【修正の要】
-      // 変換中(isComposing)フラグが立っている間は完全にミス判定をパス(falseに固定)
       if (!isComposing) {
-        // 確定した直後のEnterキー、またはBackspace、または半角英数の直接入力の場合
-        if (justConfirmed || currentType === "削除" || (e.code !== "Enter" && e.code !== "Space")) {
+        if (justConfirmed || currentType === "削除" || e.code === "Enter") {
           if (currentInput.length > 0) {
-            // お手本文字列の、現在の入力文字数分を切り出して比較
             const targetSubstring = targetText.substring(0, currentInput.length);
             if (currentInput !== targetSubstring) {
-              isMiss = true; // ミスを検知
+              isMiss = true;
             }
           }
         }
       }
 
-      // ログオブジェクトを作成して配列にプッシュ
+      // ログに追加
       logs.push({
         "タイプ": currentType,
-        "押されたキー": e.code,            
-        "変換中フラグ": isComposing || justConfirmed,        
+        "押されたキー": e.code,
+        "変換中フラグ": isComposing,
         "変更前テキスト": lastValue,
         "変更後テキスト": currentInput,
         "ミス": isMiss,
@@ -229,100 +301,143 @@
         "time": Math.round(now)
       });
 
-      // 確定キーやスペースが離されたらフラグを安全に戻す
-      if (e.code === "Enter" || e.code === "Space") {
-        justConfirmed = false;
-      }
-
-      // 画面更新処理
+      lastValue = currentInput;
+      justConfirmed = false;
+      updateLogDisplay();
       if (!isComposing) {
         checkMissAndFeedback();
-      } else {
-        lastValue = currentInput;
       }
     });
 
-    // 4. ミス判定と視覚フィードバック関数
+
+    // --- ミス判定と画面表示のフィードバック ---
     function checkMissAndFeedback() {
       const currentInput = inputBox.value;
-      let isMiss = false;
-
-      if (currentInput.length > 0) {
-        const targetSubstring = targetText.substring(0, currentInput.length);
-        if (currentInput !== targetSubstring) {
-          isMiss = true;
-        }
-      }
-
-      if (isMiss) {
-        if (!inputBox.classList.contains('input-error')) {
-          inputBox.classList.add('input-error');
-        }
-      } else {
-        inputBox.classList.remove('input-error');
-      }
-
-      updateComparisonDisplay(currentInput);
-      lastValue = currentInput;
-    }
-
-    // 5. お手本エリアのリアルタイム色付け表示
-    function updateComparisonDisplay(currentInput) {
-      inputComparisonArea.innerHTML = '';
+      let html = "";
+      let hasError = false;
 
       for (let i = 0; i < currentInput.length; i++) {
-        const span = document.createElement('span');
-        span.textContent = currentInput[i];
-       
-        if (i < targetText.length && currentInput[i] !== targetText[i]) {
-          span.classList.add('miss');
+        if (i < targetText.length) {
+          if (currentInput[i] === targetText[i]) {
+            html += `<span class="correct">${currentInput[i]}</span>`;
+          } else {
+            html += `<span class="miss">${currentInput[i]}</span>`;
+            hasError = true;
+          }
         } else {
-          span.classList.add('correct');
+          html += `<span class="miss">${currentInput[i]}</span>`;
+          hasError = true;
         }
-        inputComparisonArea.appendChild(span);
+      }
+
+      inputComparisonArea.innerHTML = html;
+
+      if (hasError) {
+        inputBox.classList.add("input-error");
+      } else {
+        inputBox.classList.remove("input-error");
       }
     }
 
-    // --- ボタンコントロール ---
+    // --- 画面下のログ表示エリアを更新 ---
+    function updateLogDisplay() {
+      logArea.textContent = logs.map((log, index) => {
+        return `#${index + 1}\n` + JSON.stringify(log, null, 2);
+      }).join("\n\n");
+      logArea.scrollTop = logArea.scrollHeight;
+    }
 
-    // 6. 完了ボタン（一括表示）
-    finishBtn.addEventListener("click", () => {
-      logArea.textContent = "";
-
-      if (logs.length === 0) {
-        logArea.textContent = "ログデータがありません。";
-        return;
-      }
-
-      let formattedLog = "";
-      logs.forEach((log, i) => {
-        formattedLog += `#${i + 1}\n`;
-        formattedLog += JSON.stringify(log, null, 2);
-        formattedLog += "\n\n";
-      });
-
-      logArea.textContent = formattedLog;
-    });
-
-    // 7. リセットボタン
+    // --- ボタン操作：リセット ---
     resetBtn.addEventListener("click", () => {
       inputBox.value = "";
-      inputBox.classList.remove('input-error');
-      inputComparisonArea.innerHTML = '';
       lastValue = "";
       logs = [];
       logArea.textContent = "";
-     
-      lastTouchEndTime = null;
-      touchStartTime = null;
-      startX = null;
-      startY = null;
+      inputComparisonArea.innerHTML = "";
+      inputBox.classList.remove("input-error");
+      statusMessage.textContent = "データをリセットしました。";
+      statusMessage.style.color = "black";
+      finishBtn.disabled = false;
+    });
 
-      keyTimes = {};
-      lastKeyUpTime = null;
-      lastKeyPressTime = null;
-      isComposing = false;
-      justConfirmed = false;
+    // --- ボタン操作：手動CSV保存（バックアップ用） ---
+    downloadBtn.addEventListener("click", () => {
+      if (logs.length === 0) {
+        alert("ログデータがありません。");
+        return;
+      }
+      const pId = participantInput.value || "unknown";
+     
+      // CSVのヘッダー
+      let csvContent = "data:text/csv;charset=utf-8,参加者,番号,タイプ,押されたキー,変換中フラグ,変更前テキスト,変更後テキスト,ミス,キーホールド時間(ms),キー間移動時間(ms),pressToPress(ms),time\n";
+     
+      // ログデータをCSV行に変換
+      logs.forEach((log, index) => {
+        const row = [
+          pId,
+          index + 1,
+          log["タイプ"],
+          log["押されたキー"],
+          log["変換中フラグ"],
+          log["変更前テキスト"],
+          log["変更後テキスト"],
+          log["ミス"],
+          log["キーホールド時間(ms)"],
+          log["キー間移動時間(ms)"],
+          log["pressToPress(ms)"],
+          log["time"]
+        ].map(val => (val === null || val === undefined) ? "" : `"${String(val).replace(/"/g, '""')}"`).join(",");
+        csvContent += row + "\n";
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `typing_log_p${pId}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    // --- ボタン操作：完了（Googleスプレッドシートへ自動送信） ---
+    finishBtn.addEventListener("click", () => {
+      if (logs.length === 0) {
+        alert("送信するログデータがありません。入力を行ってください。");
+        return;
+      }
+
+      finishBtn.disabled = true;
+      statusMessage.textContent = "Googleスプレッドシートに送信中...";
+      statusMessage.style.color = "blue";
+
+      const pId = participantInput.value || "未指定";
+
+      // GASに送るデータ構造を作成
+      const payload = {
+        participant: pId,
+        logs: logs
+      };
+
+      // fetchを使ってGoogle Apps ScriptにデータをPOST送信
+      fetch(GAS_URL, {
+        method: "POST",
+        mode: "no-cors", // クロスドメインエラーを回避する設定
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      })
+      .then(() => {
+        statusMessage.textContent = "スプレッドシートへの送信が完了しました！";
+        statusMessage.style.color = "green";
+        alert("送信完了しました！スプレッドシートを確認してください。");
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+        statusMessage.textContent = "送信エラーが発生しました。手動CSV保存を試してください。";
+        statusMessage.style.color = "red";
+        finishBtn.disabled = false;
+      });
     });
   </script>
 </body>
