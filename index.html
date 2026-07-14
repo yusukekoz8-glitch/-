@@ -158,12 +158,12 @@
     let startX = null;
     let startY = null;
 
-    // PC・スマホキーボード用
+    // PCキーボード用
     let lastValue = "";
     let keyTimes = {};
     let lastKeyUpTime = null;
     let lastKeyPressTime = null;
-    let isComposing = false; // 日本語の変換中（未確定）フラグ
+    let isComposing = false;
     let justConfirmed = false;
 
     const targetText = "大月先生は、長野県松本市出身である。生まれは、";
@@ -188,7 +188,7 @@
       logs.push({
         "タイプ": "タッチ",
         "押されたキー": null,
-        "変換中フラグ": isComposing,
+        "変換中フラグ": null,
         "変更前テキスト": null,
         "変更後テキスト": null,
         "ミス": null,
@@ -203,7 +203,7 @@
     });
 
 
-    // --- キーボード・日本語フリック用挙動ログ取得 ---
+    // --- PCキーボード用：タイピング挙動ログ取得 ---
 
     // 1. IME（日本語入力）の制御
     inputBox.addEventListener("compositionstart", () => {
@@ -211,13 +211,9 @@
       justConfirmed = false;
     });
 
-    inputBox.addEventListener("compositionupdate", (e) => {
-      isComposing = true;
-    });
-
     inputBox.addEventListener("compositionend", () => {
       isComposing = false;
-      justConfirmed = true; // 文字が確定された瞬間
+      justConfirmed = true; // 漢字が確定された瞬間
       checkMissAndFeedback();
     });
 
@@ -294,7 +290,7 @@
       // ログに追加
       logs.push({
         "タイプ": currentType,
-        "押されたキー": e.code || "Flick",
+        "押されたキー": e.code,
         "変換中フラグ": isComposing,
         "変更前テキスト": lastValue,
         "変更後テキスト": currentInput,
@@ -310,14 +306,6 @@
       updateLogDisplay();
       if (!isComposing) {
         checkMissAndFeedback();
-      }
-    });
-
-    // inputイベント（フリック等での確定タイミング調整用）
-    inputBox.addEventListener("input", (e) => {
-      if (!isComposing) {
-        checkMissAndFeedback();
-        lastValue = inputBox.value;
       }
     });
 
@@ -413,12 +401,6 @@
 
     // --- ボタン操作：完了（Googleスプレッドシートへ自動送信） ---
     finishBtn.addEventListener("click", () => {
-      // 🌟 未確定の文字（ひらがな等の変換中）がある場合は、送信をブロックする
-      if (isComposing) {
-        alert("文字の変換・確定を完了させてから「完了」ボタンを押してください。");
-        return;
-      }
-
       if (logs.length === 0) {
         alert("送信するログデータがありません。入力を行ってください。");
         return;
@@ -439,7 +421,7 @@
       // fetchを使ってGoogle Apps ScriptにデータをPOST送信
       fetch(GAS_URL, {
         method: "POST",
-        mode: "no-cors",
+        mode: "no-cors", // クロスドメインエラーを回避する設定
         headers: {
           "Content-Type": "application/json"
         },
@@ -449,15 +431,15 @@
         statusMessage.textContent = "スプレッドシートへの送信が完了しました！次の入力をどうぞ。";
         statusMessage.style.color = "green";
        
-        // 送信完了後、自動で次の入力ができるようにリセット
+        // 🌟 【新規追加】送信完了後、自動で次の入力ができるように各種ログとロックをリセット
         inputBox.value = "";
         lastValue = "";
         logs = [];
         logArea.textContent = "";
         inputComparisonArea.innerHTML = "";
         inputBox.classList.remove("input-error");
-        finishBtn.disabled = false;
-        inputBox.focus();
+        finishBtn.disabled = false; // 送信ボタンのロックを解除
+        inputBox.focus(); // 入力ボックスにカーソルを自動で戻す
       })
       .catch((error) => {
         console.error("Error:", error);
